@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useCallback, useEffect } from "react";
+import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useWalletContext } from "@/providers/wallet-provider";
 import { useBalances } from "@/hooks/useBalances";
 import { useTransactionHistory } from "@/hooks/useTransactionHistory";
@@ -61,6 +61,12 @@ export function TradeConsole() {
   const [showDetails, setShowDetails] = useState(false);
   const [slippage, setSlippage] = useState("0.5");
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string; detail?: string; explorerUrl?: string } | null>(null);
+
+  useEffect(() => {
+    if ((mode === "bridge" || mode === "send") && form.token !== "USDC") {
+      setForm((prev) => ({ ...prev, token: "USDC" }));
+    }
+  }, [mode, form.token]);
 
   const operation: Operation = useMemo(() => {
     if (mode === "swap") return "swap";
@@ -173,6 +179,7 @@ export function TradeConsole() {
         body.from = form.from;
         body.toChain = form.toChain;
         body.amount = form.amount || "0";
+        body.token = form.token;
       } else {
         body.chain = form.chain;
         body.to = form.to;
@@ -197,7 +204,7 @@ export function TradeConsole() {
       if (mode === "swap") {
         summary = `${form.amount} ${form.tokenIn} → ${form.tokenOut}`;
       } else if (mode === "bridge") {
-        summary = `${form.amount} USDC · ${getChainLabel(form.from)} → ${getChainLabel(form.toChain)}`;
+        summary = `${form.amount} ${form.token} · ${getChainLabel(form.from)} → ${getChainLabel(form.toChain)}`;
       } else {
         summary = `${form.amount} ${form.token} → ${form.to.slice(0, 8)}…`;
       }
@@ -207,9 +214,19 @@ export function TradeConsole() {
       if (typeof data.result === "string") {
         extractedHash = data.result;
       } else if (data.result) {
+        // Standard tx response
         extractedHash = data.result.hash || data.result.transactionHash || data.result.txHash || data.result.id;
-        if (!extractedHash) {
-            extractedHash = typeof data.result === "object" ? JSON.stringify(data.result) : String(data.result);
+        
+        // Bridge tx response containing multiple steps
+        if (!extractedHash && Array.isArray(data.result.steps)) {
+          const mainStep = data.result.steps.find((s: any) => s.name === "burn") || data.result.steps.find((s: any) => s.txHash);
+          if (mainStep) {
+            extractedHash = mainStep.txHash;
+          }
+        }
+
+        if (!extractedHash && typeof data.result !== "object") {
+           extractedHash = String(data.result);
         }
       }
 
@@ -219,7 +236,7 @@ export function TradeConsole() {
         status: "success",
         details: {
           amountIn: form.amount,
-          tokenIn: mode === "swap" ? form.tokenIn : (mode === "bridge" ? "USDC" : form.token),
+          tokenIn: mode === "swap" ? form.tokenIn : form.token,
           tokenOut: mode === "swap" ? form.tokenOut : undefined,
           fromChain: mode === "bridge" ? form.from : form.chain,
           toChain: mode === "bridge" ? form.toChain : undefined,
@@ -342,7 +359,13 @@ export function TradeConsole() {
                 amount={form.amount}
                 onAmountChange={(v) => setForm({ ...form, amount: v })}
                 token={form.tokenIn}
-                onTokenChange={(t) => setForm({ ...form, tokenIn: t })}
+                onTokenChange={(t) => {
+                  if (t === form.tokenOut) {
+                    setForm({ ...form, tokenIn: t, tokenOut: form.tokenIn });
+                  } else {
+                    setForm({ ...form, tokenIn: t });
+                  }
+                }}
                 network={getChainLabel(form.chain)}
                 balance={getTokenBalance(form.tokenIn)}
               />
@@ -359,7 +382,13 @@ export function TradeConsole() {
                 amount={hasAmount ? swapDetails.output : ""}
                 onAmountChange={() => {}}
                 token={form.tokenOut}
-                onTokenChange={(t) => setForm({ ...form, tokenOut: t })}
+                onTokenChange={(t) => {
+                  if (t === form.tokenIn) {
+                    setForm({ ...form, tokenOut: t, tokenIn: form.tokenOut });
+                  } else {
+                    setForm({ ...form, tokenOut: t });
+                  }
+                }}
                 network={getChainLabel(form.chain)}
                 readOnly
                 dimmed
@@ -375,10 +404,11 @@ export function TradeConsole() {
                 label="Transfer from"
                 amount={form.amount}
                 onAmountChange={(v) => setForm({ ...form, amount: v })}
-                token="USDC"
-                onTokenChange={() => {}}
+                token={form.token}
+                onTokenChange={(t) => setForm({ ...form, token: t })}
                 network={getChainLabel(form.from)}
-                balance={getTokenBalance("USDC")}
+                balance={getTokenBalance(form.token)}
+                readOnlyToken={true}
               />
               <div className="relative z-10 flex justify-center -my-2.5">
                 <button
@@ -392,10 +422,11 @@ export function TradeConsole() {
                 label="Receive on"
                 amount={hasAmount ? bridgeDetails.received : ""}
                 onAmountChange={() => {}}
-                token="USDC"
+                token={form.token}
                 onTokenChange={() => {}}
                 network={getChainLabel(form.toChain)}
                 readOnly
+                readOnlyToken={true}
                 dimmed
               />
             </div>
@@ -412,6 +443,7 @@ export function TradeConsole() {
                 onTokenChange={(t) => setForm({ ...form, token: t })}
                 network={getChainLabel(form.chain)}
                 balance={getTokenBalance(form.token)}
+                readOnlyToken={true}
               />
               <div className="rounded-2xl bg-[#1c1d27] p-4">
                 <div className="mb-2 text-xs text-white/30 font-medium">Recipient address</div>
@@ -478,14 +510,14 @@ export function TradeConsole() {
 
                   {mode === "bridge" && (
                     <>
-                      <DetailRow label="Bridge fee" value={`${bridgeDetails.bridgeFee} USDC`} />
+                      <DetailRow label="Bridge fee" value={`${bridgeDetails.bridgeFee} ${form.token}`} />
                       <DetailRow
                         label="Network fee"
                         value={`~$${bridgeDetails.gasFee}`}
                         icon={<BoltIcon className="size-3 text-emerald-400" />}
                       />
                       <DetailRow label="Est. time" value={bridgeDetails.estimatedTime} />
-                      <DetailRow label="You receive" value={`${bridgeDetails.received} USDC`} />
+                      <DetailRow label="You receive" value={`${bridgeDetails.received} ${form.token}`} />
                       <DetailRow label="Protocol" value={bridgeDetails.protocol} />
                       <DetailRow label="Max. slippage" value={`${slippage}%`} />
                     </>
@@ -585,6 +617,7 @@ function TokenPanel({
   onTokenChange,
   network,
   readOnly = false,
+  readOnlyToken = false,
   dimmed = false,
   balance,
 }: {
@@ -595,6 +628,7 @@ function TokenPanel({
   onTokenChange: (v: string) => void;
   network: string;
   readOnly?: boolean;
+  readOnlyToken?: boolean;
   dimmed?: boolean;
   balance?: string;
 }) {
@@ -616,7 +650,7 @@ function TokenPanel({
             readOnly ? "text-white/40 cursor-default" : "text-white"
           }`}
         />
-        <TokenBadge symbol={token} onChange={onTokenChange} />
+        <TokenBadge symbol={token} onChange={onTokenChange} readOnly={readOnlyToken} />
       </div>
       {/* Balance row */}
       {balance && (
@@ -647,10 +681,25 @@ function TokenPanel({
 function TokenBadge({
   symbol,
   onChange,
+  readOnly,
 }: {
   symbol: string;
   onChange: (v: string) => void;
+  readOnly?: boolean;
 }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   const color = getTokenColor(symbol);
   
   function getTokenIcon(sym: string) {
@@ -663,29 +712,56 @@ function TokenBadge({
   const icon = getTokenIcon(symbol);
 
   return (
-    <div className="group relative flex shrink-0 items-center gap-2 rounded-full bg-white/[0.06] py-1.5 pl-2 pr-3 hover:bg-white/[0.10] transition-colors cursor-pointer border border-white/[0.04]">
-      <div
-        className="flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-white overflow-hidden"
-        style={{ background: icon ? 'transparent' : color }}
+    <div ref={containerRef} className="relative shrink-0">
+      <button
+        onClick={() => !readOnly && setIsOpen(!isOpen)}
+        className={`group relative flex items-center gap-2 rounded-full py-1.5 pl-2 pr-3 transition-colors border ${
+          readOnly ? "bg-white/[0.03] border-transparent cursor-default opacity-90" : "bg-white/[0.06] hover:bg-white/[0.10] cursor-pointer border-white/[0.04]"
+        }`}
       >
-        {icon ? (
-          <img src={icon} alt={symbol} className="w-full h-full object-cover" />
-        ) : (
-          symbol.charAt(0)
-        )}
-      </div>
-      <select
-        value={symbol}
-        onChange={(e) => onChange(e.target.value)}
-        className="appearance-none bg-transparent text-base font-semibold text-white outline-none cursor-pointer pr-4"
-      >
-        {TOKENS.map((t) => (
-          <option key={t.symbol} value={t.symbol} className="bg-[#1c1d27] text-white">
-            {t.symbol}
-          </option>
-        ))}
-      </select>
-      <ChevronDownIcon className="absolute right-2 size-3.5 text-white/30 pointer-events-none" />
+        <div
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white overflow-hidden bg-white/[0.02]"
+          style={{ background: icon ? 'transparent' : color }}
+        >
+          {icon ? (
+            <img src={icon} alt={symbol} className="w-full h-full object-cover" />
+          ) : (
+            symbol.charAt(0)
+          )}
+        </div>
+        <span className="text-base font-semibold text-white pr-4">{symbol}</span>
+        {!readOnly && <ChevronDownIcon className={`absolute right-2.5 size-3.5 text-white/30 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />}
+      </button>
+
+      {isOpen && (
+        <div className="absolute right-0 top-full mt-2 w-48 rounded-2xl border border-white/[0.08] bg-[#1a1b23]/95 backdrop-blur-2xl p-1.5 shadow-2xl shadow-black/50 z-[100] animate-in fade-in zoom-in-95 origin-top-right">
+          <div className="px-3 py-2 text-[10px] font-bold text-white/30 uppercase tracking-widest mb-1">Select Token</div>
+          <div className="space-y-0.5">
+            {TOKENS.map((t) => {
+              const tIcon = getTokenIcon(t.symbol);
+              const isSelected = symbol === t.symbol;
+              return (
+                <button
+                  key={t.symbol}
+                  onClick={() => { onChange(t.symbol); setIsOpen(false); }}
+                  className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-sm font-medium transition-colors ${
+                    isSelected ? "bg-white/[0.08] text-white" : "text-white/50 hover:bg-white/[0.04] hover:text-white"
+                  }`}
+                >
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full overflow-hidden text-[10px] font-bold text-white shadow-inner bg-white/[0.02] border border-white/[0.05]" style={{ background: tIcon ? 'transparent' : t.color }}>
+                    {tIcon ? <img src={tIcon} alt={t.symbol} className="w-full h-full object-cover" /> : t.symbol.charAt(0)}
+                  </div>
+                  <div className="flex flex-col items-start flex-1">
+                    <span className="text-sm font-semibold">{t.symbol}</span>
+                    <span className="text-[10px] text-white/30">{t.name}</span>
+                  </div>
+                  {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
