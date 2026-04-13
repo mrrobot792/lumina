@@ -17,6 +17,7 @@ export type Transaction = {
     toAddress?: string;
   };
   message?: string;
+  txHash?: string;
 };
 
 const STORAGE_KEY = "arc_tx_history";

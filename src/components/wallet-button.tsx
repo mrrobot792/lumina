@@ -540,6 +540,12 @@ export function WalletButton() {
   );
 }
 
+function getExplorerUrl(chainParam: string | undefined = "Arc_Testnet", txHash: string) {
+  if (chainParam === "Ethereum_Sepolia") return `https://sepolia.etherscan.io/tx/${txHash}`;
+  if (chainParam === "Base_Sepolia") return `https://sepolia.basescan.org/tx/${txHash}`;
+  return `https://testnet.arcscan.app/tx/${txHash}`;
+}
+
 /* ═══════════════════════════════════════════════
    Activity List — transaction history
    ═══════════════════════════════════════════════ */
@@ -557,36 +563,44 @@ function ActivityList() {
 
   return (
     <div className="px-3 py-2 space-y-0.5">
-      {transactions.map((tx) => (
-        <div
-          key={tx.id}
-          className="flex items-center justify-between rounded-xl px-3 py-2.5 hover:bg-white/[0.03] transition-colors"
-        >
-          <div className="flex items-center gap-3">
-            <div className={`flex h-9 w-9 items-center justify-center rounded-full text-sm shrink-0 ${
-              tx.status === "success" ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"
-            }`}>
-              {tx.type === "swap" ? "⇄" : tx.type === "bridge" ? "⛓" : "↗"}
-            </div>
-            <div>
-              <div className="text-sm font-medium text-white capitalize">{tx.type}</div>
-              <div className="text-xs text-white/25">
-                {tx.details.amountIn && `${tx.details.amountIn} ${tx.details.tokenIn || ""}`}
-                {tx.details.tokenOut && ` → ${tx.details.tokenOut}`}
-                {tx.details.toAddress && ` → ${tx.details.toAddress.slice(0, 6)}…`}
+      {transactions.map((tx) => {
+        const explorerUrl = tx.txHash ? getExplorerUrl(tx.details.fromChain, tx.txHash) : undefined;
+        const Wrapper = explorerUrl ? "a" : "div";
+        
+        return (
+          <Wrapper
+            key={tx.id}
+            href={explorerUrl}
+            target={explorerUrl ? "_blank" : undefined}
+            rel={explorerUrl ? "noopener noreferrer" : undefined}
+            className={`flex items-center justify-between rounded-xl px-3 py-2.5 hover:bg-white/[0.03] transition-colors ${explorerUrl ? "cursor-pointer hover:bg-white/[0.05]" : ""}`}
+          >
+            <div className="flex items-center gap-3">
+              <div className={`flex h-9 w-9 items-center justify-center rounded-full text-sm shrink-0 ${
+                tx.status === "success" ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"
+              }`}>
+                {tx.type === "swap" ? "⇄" : tx.type === "bridge" ? "⛓" : "↗"}
+              </div>
+              <div>
+                <div className="text-sm font-medium text-white capitalize">{tx.type}</div>
+                <div className="text-xs text-white/25">
+                  {tx.details.amountIn && `${tx.details.amountIn} ${tx.details.tokenIn || ""}`}
+                  {tx.details.tokenOut && ` → ${tx.details.tokenOut}`}
+                  {tx.details.toAddress && ` → ${tx.details.toAddress.slice(0, 6)}…`}
+                </div>
               </div>
             </div>
-          </div>
-          <div className="text-right">
-            <div className={`text-xs font-medium ${tx.status === "success" ? "text-emerald-400" : "text-red-400"}`}>
-              {tx.status === "success" ? "Success" : "Failed"}
+            <div className="text-right">
+              <div className={`text-xs font-medium ${tx.status === "success" ? "text-emerald-400" : "text-red-400"}`}>
+                {tx.status === "success" ? "Success" : "Failed"}
+              </div>
+              <div className="text-[10px] text-white/15 tabular-nums">
+                {formatTimeAgo(tx.timestamp)}
+              </div>
             </div>
-            <div className="text-[10px] text-white/15 tabular-nums">
-              {formatTimeAgo(tx.timestamp)}
-            </div>
-          </div>
-        </div>
-      ))}
+          </Wrapper>
+        );
+      })}
     </div>
   );
 }

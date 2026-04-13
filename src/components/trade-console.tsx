@@ -39,6 +39,12 @@ const defaults = {
   tokenOut: "EURC",
 };
 
+function getExplorerUrl(chainParam: string | undefined = "Arc_Testnet", txHash: string) {
+  if (chainParam === "Ethereum_Sepolia") return `https://sepolia.etherscan.io/tx/${txHash}`;
+  if (chainParam === "Base_Sepolia") return `https://sepolia.basescan.org/tx/${txHash}`;
+  return `https://testnet.arcscan.app/tx/${txHash}`;
+}
+
 function getChainLabel(id: string) {
   return CHAINS.find((c) => c.id === id)?.label ?? id.replace(/_/g, " ");
 }
@@ -54,7 +60,7 @@ export function TradeConsole() {
   const [showSettings, setShowSettings] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [slippage, setSlippage] = useState("0.5");
-  const [toast, setToast] = useState<{ type: "success" | "error"; message: string; detail?: string } | null>(null);
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string; detail?: string; explorerUrl?: string } | null>(null);
 
   const operation: Operation = useMemo(() => {
     if (mode === "swap") return "swap";
@@ -196,6 +202,17 @@ export function TradeConsole() {
         summary = `${form.amount} ${form.token} → ${form.to.slice(0, 8)}…`;
       }
 
+      console.log("[trade-console] Result from operation:", data.result);
+      let extractedHash = undefined;
+      if (typeof data.result === "string") {
+        extractedHash = data.result;
+      } else if (data.result) {
+        extractedHash = data.result.hash || data.result.transactionHash || data.result.txHash || data.result.id;
+        if (!extractedHash) {
+            extractedHash = typeof data.result === "object" ? JSON.stringify(data.result) : String(data.result);
+        }
+      }
+
       // Save to history
       addTransaction({
         type: mode,
@@ -208,16 +225,24 @@ export function TradeConsole() {
           toChain: mode === "bridge" ? form.toChain : undefined,
           toAddress: mode === "send" ? form.to : undefined,
         },
+        txHash: extractedHash,
       });
 
-      setToast({ type: "success", message: `${mode.charAt(0).toUpperCase() + mode.slice(1)} successful`, detail: summary });
+      let explorerUrl = undefined;
+      if (extractedHash) {
+        explorerUrl = getExplorerUrl(mode === "bridge" ? form.from : form.chain, extractedHash);
+      }
+
+      setToast({ type: "success", message: `${mode.charAt(0).toUpperCase() + mode.slice(1)} successful`, detail: summary, explorerUrl });
       setStatus("done");
 
       // Reset amount after success
       setForm((prev) => ({ ...prev, amount: "" }));
 
-      // Refetch balances
+      // Refetch balances immediately, and queue follow-up fetches to account for block confirmation delays
       refetch();
+      setTimeout(() => refetch(), 1000);
+      setTimeout(() => refetch(), 4000);
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Unexpected error";
 
@@ -509,7 +534,9 @@ export function TradeConsole() {
 
       {/* ───── Toast Notification ───── */}
       {toast && (
-        <div className={`rounded-2xl border overflow-hidden animate-fade-in ${
+        <div 
+          onClick={() => { if(toast.explorerUrl) window.open(toast.explorerUrl, '_blank') }}
+          className={`rounded-2xl border overflow-hidden animate-fade-in ${toast.explorerUrl ? "cursor-pointer hover:shadow-lg transition-all" : ""} ${
           toast.type === "success"
             ? "border-emerald-500/20 bg-emerald-500/[0.06]"
             : "border-red-500/20 bg-red-500/[0.06]"
@@ -535,7 +562,7 @@ export function TradeConsole() {
               )}
             </div>
             <button
-              onClick={() => setToast(null)}
+              onClick={(e) => { e.stopPropagation(); setToast(null); }}
               className="text-white/20 hover:text-white/50 transition-colors shrink-0"
             >
               <XMarkIcon className="size-4" />

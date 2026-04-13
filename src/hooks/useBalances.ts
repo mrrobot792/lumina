@@ -163,11 +163,15 @@ export function useBalances(address: string | null, chainId: number | null) {
 
       setBalances(results);
 
-      // Calculate total: native USDC + any ERC-20 USDC balances
+      // Calculate total: native USDC + any ERC-20 USDC balances + EURC equivalent
       let totalVal = 0;
       for (const r of results) {
+        const amount = parseFloat(r.balance.replace(/,/g, "")) || 0;
         if (r.symbol === "USDC") {
-          totalVal += parseFloat(r.balance.replace(/,/g, "")) || 0;
+          totalVal += amount;
+        } else if (r.symbol === "EURC") {
+          // Approximate conversion: 1 EURC ≈ 1.0833 USDC
+          totalVal += amount * 1.0833;
         }
       }
       setTotalUsd(`$${totalVal.toFixed(2)}`);
